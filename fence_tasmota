@@ -1,0 +1,127 @@
+#!/usr/libexec/platform-python -tt
+
+# Fence agent for devices that support the tasmota API Specification.
+
+import sys
+import re
+import logging
+import json
+import requests
+import atexit
+sys.path.append("/usr/share/fence")
+
+from fencing import *
+from fencing import fail_usage, run_delay
+
+GET_HEADERS = {'accept': 'application/json'}
+
+def get_power_status(conn, options):
+    response = send_get_request(options, options["--tasmota-uri"])
+    if response['ret'] is False:
+        fail_usage("Couldn't get power information")
+    data = response['data']
+    try:
+        logging.debug("PowerState is: " + data[u'POWER'])
+    except Exception:
+        fail_usage("Unable to get PowerState: " + "http://" + options["--ip"] + ":" + str(options["--ipport"]) + options["--tasmota-uri"])
+
+    if data[u'POWER'].strip() == "OFF":
+        return "off"
+    else:
+        return "on"
+
+def set_power_status(conn, options):
+    action = {
+        'on' : "On",
+        'off': "Off",
+        'reboot': "reboot"
+    }[options.get("original-action") or options["--action"]]
+
+    response = send_get_request(options, options["--tasmota-uri"])
+    if response['ret'] is False:
+        fail_usage("Error sending power command")
+        return {'ret': False}
+    data = response['data']
+    return
+
+def send_get_request(options, uri):
+    full_uri = "http://" + options["--ip"] + ":" + str(options["--ipport"]) + uri + str(options["--action"])
+    try:
+        resp = requests.get(full_uri, headers=GET_HEADERS,
+                            auth=(options["--username"], options["--password"]))
+        data = resp.json()
+    except Exception as e:
+        fail_usage("Failed: send_get_request: " + str(e))
+    return {'ret': True, 'data': data}
+
+def find_systems_resource(options):
+    response = send_get_request(options, options["--tasmota-uri"])
+    if response['ret'] is False:
+        return {'ret': False}
+    data = response['data']
+
+    if 'Systems' not in data:
+        # Systems resource not found"
+        return {'ret': False}
+    else:
+        response = send_get_request(options, data["Systems"]["@odata.id"])
+        if response['ret'] is False:
+            return {'ret': False}
+        data = response['data']
+
+        # need to be able to handle more than one entry
+        for member in data[u'Members']:
+            system_uri = member[u'@odata.id']
+        return {'ret': True, 'uri': system_uri}
+
+def define_new_opts():
+    all_opt["tasmota-uri"] = {
+        "getopt" : ":",
+        "longopt" : "tasmota-uri",
+        "help" : "--tasmota-uri=[uri]            Base or starting tasmota URI",
+        "required" : "0",
+        "default" : "/cm?cmnd=Power%20",
+        "shortdesc" : "Base or starting tasmota URI",
+        "order": 1
+    }
+
+
+def main():
+    atexit.register(atexit_handler)
+    device_opt = ["ipaddr", "login", "passwd", "tasmota-uri",
+                  "ssl", "diag"]
+    define_new_opts()
+
+    opt = process_input(device_opt)
+
+    all_opt["ssl"]["default"] = "1"
+
+
+    options = check_input(device_opt, opt)
+
+    docs = {}
+    docs["shortdesc"] = "I/O Fencing agent for tasmota"
+    docs["longdesc"] = "fence_tasmota is an I/O Fencing agent which can be used with \
+    Out-of-Band controllers that support tasmota APIs. These controllers provide remote \
+    access to control power on a server."
+    docs["vendorurl"] = "http://tasmota.github.io/docs/Commands/#with-web-requests"
+    show_docs(options, docs)
+    run_delay(options)
+
+    ##
+    ## Operate the fencing device
+    ####
+    if "--ssl-insecure" in opt:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    # backwards compatibility for <ip>:<port>
+    if options["--ip"].count(":") == 1:
+        (options["--ip"], options["--ipport"]) = options["--ip"].split(":")
+
+
+    result = fence_action(None, options, set_power_status, get_power_status, None, None)
+    sys.exit(result)
+
+if __name__ == "__main__":
+    main()
