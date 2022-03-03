@@ -16,7 +16,7 @@ Status: OFF
 Success: Rebooted
 ```
 
-[3] Add custom fence to Ovirt/RHV
+[3] Add custom fence to oVirt/RHV
 ```
 [root@rhv-m ~]# engine-config -s CustomVdsFenceType="tasmota"
 Picked up JAVA_TOOL_OPTIONS: -Dcom.redhat.fips=false
